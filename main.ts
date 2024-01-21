@@ -394,7 +394,7 @@ namespace notebook {
     //% block="valor $operation de $key"
     //% key.defl="clave"
     //% key.shadow=notebook_key
-    //% weight=100 group="Hoja resumen"
+    //% weight=70 group="Hojas de mi grupo"
     export function getAggregateValueFrom(key: string, operation: Operation): number {
         const memberValues = getNumberMemberValuesForKey(key);
 
@@ -426,7 +426,7 @@ namespace notebook {
     //% block="dispositivo con $operation de $key"
     //% key.defl="clave"
     //% key.shadow=notebook_key
-    //% weight=90 group="Hoja resumen"
+    //% weight=60 group="Hojas de mi grupo"
     export function getDeviceWithExtremaValue(key: string, operation: DeviceOperation): string {
         const realOperation = operation === DeviceOperation.MAX ? Operation.MAX : Operation.MIN;
         const aggregateValue = getAggregateValueFrom(key, realOperation);
@@ -445,7 +445,7 @@ namespace notebook {
     //% key.defl="clave"
     //% value.shadow=math_number
     //% key.shadow=notebook_key
-    //% weight=80 group="Hoja resumen"
+    //% weight=50 group="Hojas de mi grupo"
     export function getDeviceWithValue(key: string, value: any): string {
         const memberValues = getNumberMemberValuesForKey(key);
         for (const member of memberValues) {
@@ -462,7 +462,7 @@ namespace notebook {
     //% key.shadow=notebook_key
     //% draggableParameters="reporter"
     //% handlerStatement
-    //% weight=70 group="Hoja resumen"
+    //% weight=40 group="Hojas de mi grupo"
     export function iterateOverStringKeyValues(key: string, handler: (dispositivo: string, valor: any) => void) {
         const memberValues = getMemberValuesForKey(key);
 
