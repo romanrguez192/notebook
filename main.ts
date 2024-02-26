@@ -5,71 +5,157 @@ namespace notebook {
     radio.setGroup(1);
     radio.setTransmitSerialNumber(true);
 
+    interface Task {
+        id: number;
+        callback: () => void;
+        interval: number;
+        lastRun: number;
+        repeat: boolean;
+        active: boolean;
+    }
+
+    let tasks: Task[] = [];
+    let nextTaskId = 0;
+
+    function runTasks() {
+        control.inBackground(() => {
+            while (true) {
+                let currentTime = input.runningTime();
+                for (let task of tasks) {
+                    if (task.active && currentTime >= task.lastRun + task.interval) {
+                        task.callback();
+                        task.lastRun = currentTime;
+                        if (!task.repeat) {
+                            task.active = false;
+                        }
+                    }
+                }
+                tasks = tasks.filter((t) => t.active);
+                basic.pause(50);
+            }
+        });
+    }
+
+    function addTask(callback: () => void, delay: number, repeat: boolean): number {
+        let task: Task = {
+            id: nextTaskId++,
+            callback: callback,
+            interval: delay,
+            lastRun: input.runningTime(),
+            repeat: repeat,
+            active: true,
+        };
+        tasks.push(task);
+        return task.id;
+    }
+
+    function clearIntervalOrTimeout(taskId: number) {
+        let task = tasks.find((t) => t.id === taskId);
+        if (task) {
+            task.active = false;
+        }
+    }
+
+    function setInterval(callback: () => void, delay = 0): number {
+        return addTask(callback, delay, true);
+    }
+
+    function setTimeout(callback: () => void, delay = 0): number {
+        return addTask(callback, delay, false);
+    }
+
+    function clearInterval(taskId: number): void {
+        clearIntervalOrTimeout(taskId);
+    }
+
+    function clearTimeout(taskId: number): void {
+        clearIntervalOrTimeout(taskId);
+    }
+
+    runTasks();
+
     namespace betterRadio {
-        const PACKET_SIZE = 16;
+        const PACKET_SIZE = 15;
         let messageId = 0;
 
         export function sendString(message: string) {
             if (message.length === 0) {
-                const id = String.fromCharCode(messageId);
-                const index = String.fromCharCode(0);
-                const total = String.fromCharCode(1);
-                const segment = "";
+                const idByte1 = messageId >> 8;
+                const idByte2 = messageId & 0xff;
+                const index = 0;
+                const total = 1;
 
-                const emptyMessagePacket = `${id}${index}${total}${segment}`;
+                const emptyMessagePacket = Buffer.fromArray([idByte1, idByte2, index, total]);
 
-                radio.sendString(emptyMessagePacket);
-                messageId = (messageId + 1) % 256;
+                radio.sendBuffer(emptyMessagePacket);
+                messageId = (messageId + 1) % 65536;
                 return;
             }
 
-            const totalPackets = Math.ceil(message.length / PACKET_SIZE);
+            const messageBuffer = Buffer.fromUTF8(message);
 
-            const packets = [];
+            const totalPackets = Math.ceil(messageBuffer.length / PACKET_SIZE);
 
-            for (let i = 0; i < message.length; i += PACKET_SIZE) {
-                const id = String.fromCharCode(messageId);
-                const index = String.fromCharCode(i / PACKET_SIZE);
-                const total = String.fromCharCode(totalPackets);
-                const segment = message.substr(i, PACKET_SIZE);
+            const packets: Buffer[] = [];
 
-                const packet = `${id}${index}${total}${segment}`;
+            for (let i = 0; i < messageBuffer.length; i += PACKET_SIZE) {
+                const idByte1 = messageId >> 8;
+                const idByte2 = messageId & 0xff;
+                const index = i / PACKET_SIZE;
+                const total = totalPackets;
+                const segment = messageBuffer.slice(i, i + PACKET_SIZE);
+
+                const packet = Buffer.fromArray([idByte1, idByte2, index, total]).concat(segment);
                 packets.push(packet);
             }
 
-            packets.forEach(function (packet) {
-                radio.sendString(packet);
-            });
+            messageId = (messageId + 1) % 65536;
 
-            messageId = (messageId + 1) % 256;
+            packets.forEach(function (packet) {
+                radio.sendBuffer(packet);
+                basic.pause(10);
+            });
         }
 
         interface ReceivedPackets {
             [senderId: number]: {
-                [messageId: number]: string[];
+                [messageId: number]: (Buffer | null)[];
             };
         }
 
         const receivedPackets: ReceivedPackets = {};
         const listeners: ((receivedString: string) => void)[] = [];
 
-        radio.onReceivedString(function (receivedString) {
+        function removeExpiredPackets(senderId: number, messageId: number) {
+            setTimeout(function () {
+                if (receivedPackets[senderId] && receivedPackets[senderId][messageId]) {
+                    delete receivedPackets[senderId][messageId];
+                    if (Object.keys(receivedPackets[senderId]).length === 0) {
+                        delete receivedPackets[senderId];
+                    }
+                }
+            }, 1000);
+        }
+
+        radio.onReceivedBuffer(function (receivedBuffer) {
             const senderId = radio.receivedSerial();
-            const messageId = receivedString.charCodeAt(0);
-            const index = receivedString.charCodeAt(1);
-            const total = receivedString.charCodeAt(2);
-            const content = receivedString.substr(3);
+            const messageId = (receivedBuffer[0] << 8) | receivedBuffer[1];
+            const index = receivedBuffer[2];
+            const total = receivedBuffer[3];
+            const content = receivedBuffer.slice(4);
 
             if (!receivedPackets[senderId]) {
                 receivedPackets[senderId] = {};
             }
 
             if (!receivedPackets[senderId][messageId]) {
-                const packets = [];
+                const packets: (Buffer | null)[] = [];
                 for (let i = 0; i < total; i++) {
                     packets.push(null);
                 }
                 receivedPackets[senderId][messageId] = packets;
+
+                removeExpiredPackets(senderId, messageId);
             }
 
             receivedPackets[senderId][messageId][index] = content;
@@ -83,7 +169,8 @@ namespace notebook {
             }
 
             if (isComplete) {
-                const message = receivedPackets[senderId][messageId].join("");
+                const messageBuffer = Buffer.concat(receivedPackets[senderId][messageId]);
+                const message = messageBuffer.toString();
 
                 for (const listener of listeners) {
                     listener(message);
@@ -275,7 +362,7 @@ namespace notebook {
     }
 
     //% block="escribir $key = $value en mi hoja"
-    //% key.shadow=notebook_key key.defl="clave" 
+    //% key.shadow=notebook_key key.defl="clave"
     //% value.shadow=text value.defl="valor"
     //% weight=100 group="Mi hoja"
     export function setMyValue(key: string, value: any) {
@@ -335,6 +422,20 @@ namespace notebook {
                 messagePacket.group === myGroup
             ) {
                 handler(messagePacket.data.value);
+            }
+        });
+    }
+
+    //% block="cuando el valor de $key en la hoja de $device sea $value"
+    //% device.shadow=device_field
+    //% key.defl="clave"
+    //% value.shadow=math_number
+    //% draggableParameters="reporter"
+    //% weight=80 group="Hojas de mi grupo"
+    export function onValueFrom(device: string, key: string, value: any, handler: () => void) {
+        onUpdateFrom(device, key, (newValue) => {
+            if (newValue === value) {
+                handler();
             }
         });
     }
@@ -541,7 +642,7 @@ namespace notebook {
     //% key.defl="clave"
     //% key.shadow=notebook_key_shared
     //% weight=90 group="Hoja compartida"
-    export function getValueShared(key: string): string {
+    export function getValueShared(key: string) {
         const value = sharedNotebook[key];
         return value;
     }
@@ -560,5 +661,38 @@ namespace notebook {
     export function deleteKeyShared(key: string) {
         delete sharedNotebook[key];
         notifyDeleteShared(key);
+    }
+
+    //% block="al recibir un nuevo $valor de $key en la hoja compartida"
+    //% key.defl="clave"
+    //% key.shadow=notebook_key_shared
+    //% draggableParameters="reporter"
+    //% weight=60 group="Hoja compartida"
+    export function onUpdateShared(key: string, handler: (valor: any) => void) {
+        betterRadio.onReceivedString(function (receivedString: string) {
+            const messagePacket: MessagePacket = JSON.parse(receivedString);
+
+            if (
+                messagePacket.type === MessageType.NotebookSetShared &&
+                messagePacket.data.key === key &&
+                messagePacket.group === myGroup
+            ) {
+                handler(messagePacket.data.value);
+            }
+        });
+    }
+
+    //% block="cuando el valor de $key en la hoja compartida sea $value"
+    //% key.defl="clave"
+    //% key.shadow=notebook_key_shared
+    //% value.shadow=math_number
+    //% draggableParameters="reporter"
+    //% weight=50 group="Hoja compartida"
+    export function onValueShared(key: string, value: any, handler: () => void) {
+        onUpdateShared(key, (newValue) => {
+            if (newValue === value) {
+                handler();
+            }
+        });
     }
 }
