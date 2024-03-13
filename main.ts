@@ -191,6 +191,8 @@ namespace notebook {
     }
 
     enum MessageType {
+        Discovery,
+        Acknowledgement,
         NotebookSet,
         NotebookDelete,
         NotebookSetShared,
@@ -198,44 +200,220 @@ namespace notebook {
     }
 
     interface NotebookSetMessagePacket {
-        sender: string;
         type: MessageType.NotebookSet;
-        group: string | null;
         data: {
             key: string;
-            value: string | number;
+            value: any;
         };
     }
 
     interface NotebookDeleteMessagePacket {
-        sender: string;
         type: MessageType.NotebookDelete;
-        group: string | null;
         key: string;
     }
 
     interface NotebookSetSharedMessagePacket {
-        sender: string;
         type: MessageType.NotebookSetShared;
-        group: string | null;
         data: {
             key: string;
-            value: string | number;
+            value: any;
         };
     }
 
     interface NotebookDeleteSharedMessagePacket {
-        sender: string;
         type: MessageType.NotebookDeleteShared;
-        group: string | null;
         key: string;
     }
 
-    type MessagePacket =
+    interface DiscoveryMessagePacket {
+        type: MessageType.Discovery;
+        sender: string;
+        group: string;
+    }
+
+    interface AcknowledgementPacket {
+        type: MessageType.Acknowledgement;
+        sender: string;
+        receiver: string;
+        id: number;
+    }
+
+    type RegularMessagePacket =
         | NotebookSetMessagePacket
         | NotebookDeleteMessagePacket
         | NotebookSetSharedMessagePacket
         | NotebookDeleteSharedMessagePacket;
+
+    type FullRegularMessagePacket = RegularMessagePacket & {
+        id: number;
+        sender: string;
+        group: string;
+    };
+
+    type MessagePacket = DiscoveryMessagePacket | AcknowledgementPacket | FullRegularMessagePacket;
+
+    let myDeviceName = control.deviceName();
+    let myGroup = "";
+
+    interface Devices {
+        [deviceName: string]: {
+            lastSeen: number;
+        };
+    }
+
+    const activeDevices: Devices = {};
+
+    interface SimpleNotebook {
+        [key: string]: any;
+    }
+
+    interface Notebook {
+        [deviceName: string]: SimpleNotebook;
+    }
+
+    const notebook: Notebook = {};
+
+    function sendDiscoveryMessage() {
+        const discoveryMessage: DiscoveryMessagePacket = {
+            type: MessageType.Discovery,
+            sender: myDeviceName,
+            group: myGroup,
+        };
+
+        betterRadio.sendString(JSON.stringify(discoveryMessage));
+    }
+
+    betterRadio.onReceivedString(function (receivedString: string) {
+        const message: MessagePacket = JSON.parse(receivedString);
+        if (message.type === MessageType.Discovery) {
+            handleDiscoveryMessage(message);
+        }
+    });
+
+    function handleDiscoveryMessage(message: DiscoveryMessagePacket) {
+        const { sender, group } = message;
+        if (group === myGroup) {
+            activeDevices[sender] = {
+                lastSeen: control.millis(),
+            };
+        }
+    }
+
+    function removeInactiveDevices() {
+        const currentTime = control.millis();
+        const names = Object.keys(activeDevices);
+        for (const name of names) {
+            if (currentTime - activeDevices[name].lastSeen > 10000) {
+                delete activeDevices[name];
+                if (notebook[name]) {
+                    delete notebook[name];
+                }
+            }
+        }
+    }
+
+    setInterval(sendDiscoveryMessage, 5000);
+    setInterval(removeInactiveDevices, 2500);
+
+    setTimeout(sendDiscoveryMessage);
+
+    const acknowledgements: { [messageId: number]: { [deviceId: string]: boolean } } = {};
+
+    function sendMessage(messagePacket: RegularMessagePacket) {
+        const fullMessagePacket = messagePacket as FullRegularMessagePacket;
+        fullMessagePacket.id = control.micros();
+        fullMessagePacket.sender = myDeviceName;
+        fullMessagePacket.group = myGroup;
+
+        const messageId = fullMessagePacket.id;
+        const payload = JSON.stringify(fullMessagePacket);
+
+        acknowledgements[messageId] = {};
+
+        const devicesNames = Object.keys(activeDevices);
+
+        for (const deviceName of devicesNames) {
+            acknowledgements[messageId][deviceName] = false;
+
+            const intervalId = setInterval(function () {
+                if (!acknowledgements[messageId][deviceName]) {
+                    betterRadio.sendString(payload);
+                }
+            }, 300);
+
+            setTimeout(function () {
+                clearInterval(intervalId);
+                delete acknowledgements[messageId][deviceName];
+                if (Object.keys(acknowledgements[messageId]).length === 0) {
+                    delete acknowledgements[messageId];
+                }
+            }, 3000);
+        }
+
+        betterRadio.sendString(payload);
+    }
+
+    betterRadio.onReceivedString(function (receivedString: string) {
+        const messagePacket: MessagePacket = JSON.parse(receivedString);
+        if (messagePacket.type === MessageType.Acknowledgement && messagePacket.receiver === myDeviceName) {
+            const messageId = messagePacket.id;
+            const deviceName = messagePacket.sender;
+
+            if (acknowledgements[messageId] && acknowledgements[messageId][deviceName] === false) {
+                acknowledgements[messageId][deviceName] = true;
+            }
+        }
+    });
+
+    const acknowledgedMessages: { [messageId: number]: boolean } = {};
+
+    const listeners: ((messagePacket: FullRegularMessagePacket) => void)[] = [];
+
+    function deleteAcknowledgedMessageById(messageId: number) {
+        setTimeout(function () {
+            delete acknowledgedMessages[messageId];
+        }, 8000);
+    }
+
+    betterRadio.onReceivedString(function (receivedString: string) {
+        const messagePacket: MessagePacket = JSON.parse(receivedString);
+
+        if (messagePacket.type === MessageType.Discovery || messagePacket.type === MessageType.Acknowledgement) {
+            return;
+        }
+
+        if (messagePacket.group !== myGroup) {
+            return;
+        }
+
+        const messageId = messagePacket.id;
+
+        const acknowledgementPacket: AcknowledgementPacket = {
+            id: messageId,
+            type: MessageType.Acknowledgement,
+            sender: myDeviceName,
+            receiver: messagePacket.sender,
+        };
+
+        betterRadio.sendString(JSON.stringify(acknowledgementPacket));
+
+        if (acknowledgedMessages[messageId]) {
+            return;
+        }
+
+        acknowledgedMessages[messageId] = true;
+
+        deleteAcknowledgedMessageById(messageId);
+
+        // TODO: Consider scheduling the message to be processed in the next iteration of the event loop
+        for (const listener of listeners) {
+            listener(messagePacket);
+        }
+    });
+
+    function onMessageReceived(handler: (messagePacket: FullRegularMessagePacket) => void) {
+        listeners.push(handler);
+    }
 
     //% block="establecer canal de comunicacion a $canal"
     //% change.defl=1
@@ -245,8 +423,6 @@ namespace notebook {
     export function setChannel(canal: number) {
         radio.setGroup(canal);
     }
-
-    let myDeviceName = control.deviceName();
 
     // TODO: Consider multiple devices with the same name
 
@@ -266,8 +442,6 @@ namespace notebook {
         return device;
     }
 
-    let myGroup = "";
-
     //% block="establecer mi grupo a $group"
     //% group="Configuracion"
     //% weight=90
@@ -275,34 +449,20 @@ namespace notebook {
         myGroup = group;
     }
 
-    interface SimpleNotebook {
-        [key: string]: any;
-    }
-
-    interface Notebook {
-        [deviceName: string]: SimpleNotebook;
-    }
-
-    const notebook: Notebook = {};
-
     function notifySet(key: string, value: any) {
         const messagePacket: NotebookSetMessagePacket = {
-            sender: myDeviceName,
             type: MessageType.NotebookSet,
             data: { key, value },
-            group: myGroup,
         };
-        betterRadio.sendString(JSON.stringify(messagePacket));
+        sendMessage(messagePacket);
     }
 
     function notifyDelete(key: string) {
         const messagePacket: NotebookDeleteMessagePacket = {
-            sender: myDeviceName,
             type: MessageType.NotebookDelete,
             key,
-            group: myGroup,
         };
-        betterRadio.sendString(JSON.stringify(messagePacket));
+        sendMessage(messagePacket);
     }
 
     function setValue(deviceName: string, key: string, value: any) {
@@ -323,31 +483,14 @@ namespace notebook {
         delete notebook[deviceName][key];
     }
 
-    const groupMembers: string[] = [];
-
-    betterRadio.onReceivedString(function (receivedData) {
-        const messagePacket: MessagePacket = JSON.parse(receivedData);
-
-        if (messagePacket.type !== MessageType.NotebookSet) {
-            return;
-        }
-
-        if (messagePacket.group === myGroup) {
+    onMessageReceived(function (messagePacket) {
+        if (messagePacket.type === MessageType.NotebookSet) {
             setValue(messagePacket.sender, messagePacket.data.key, messagePacket.data.value);
-            if (groupMembers.indexOf(messagePacket.sender) === -1) {
-                groupMembers.push(messagePacket.sender);
-            }
         }
     });
 
-    betterRadio.onReceivedString(function (receivedData) {
-        const messagePacket: MessagePacket = JSON.parse(receivedData);
-
-        if (messagePacket.type !== MessageType.NotebookDelete) {
-            return;
-        }
-
-        if (messagePacket.group === myGroup) {
+    onMessageReceived(function (messagePacket) {
+        if (messagePacket.type === MessageType.NotebookDelete) {
             deleteValue(messagePacket.sender, messagePacket.key);
         }
     });
@@ -412,14 +555,11 @@ namespace notebook {
     //% draggableParameters="reporter"
     //% weight=90 group="Hojas de mi grupo"
     export function onUpdateFrom(device: string, key: string, handler: (valor: any) => void) {
-        betterRadio.onReceivedString(function (receivedString: string) {
-            const messagePacket: MessagePacket = JSON.parse(receivedString);
-
+        onMessageReceived(function (messagePacket) {
             if (
                 messagePacket.type === MessageType.NotebookSet &&
                 messagePacket.sender === device &&
-                messagePacket.data.key === key &&
-                messagePacket.group === myGroup
+                messagePacket.data.key === key
             ) {
                 handler(messagePacket.data.value);
             }
@@ -461,7 +601,7 @@ namespace notebook {
     }
 
     function getMemberValuesForKey(key: string) {
-        const fullMembers = groupMembers.concat([myDeviceName]);
+        const fullMembers = Object.keys(activeDevices).concat([myDeviceName]);
 
         const memberValues: { memberName: string; value: any }[] = [];
 
@@ -477,7 +617,7 @@ namespace notebook {
     }
 
     function getNumberMemberValuesForKey(key: string) {
-        const fullMembers = groupMembers.concat([myDeviceName]);
+        const fullMembers = Object.keys(activeDevices).concat([myDeviceName]);
 
         const memberValues: { memberName: string; value: number }[] = [];
 
@@ -574,48 +714,32 @@ namespace notebook {
 
     const sharedNotebook: SimpleNotebook = {};
 
-    function notifySetShared(key: string, value: string | number) {
+    function notifySetShared(key: string, value: any) {
         const messagePacket: NotebookSetSharedMessagePacket = {
-            sender: myDeviceName,
             type: MessageType.NotebookSetShared,
             data: { key, value },
-            group: myGroup,
         };
 
-        betterRadio.sendString(JSON.stringify(messagePacket));
+        sendMessage(messagePacket);
     }
 
     function notifyDeleteShared(key: string) {
         const messagePacket: NotebookDeleteSharedMessagePacket = {
-            sender: myDeviceName,
             type: MessageType.NotebookDeleteShared,
             key,
-            group: myGroup,
         };
 
-        betterRadio.sendString(JSON.stringify(messagePacket));
+        sendMessage(messagePacket);
     }
 
-    betterRadio.onReceivedString(function (receivedData) {
-        const messagePacket: MessagePacket = JSON.parse(receivedData);
-
-        if (messagePacket.type !== MessageType.NotebookSetShared) {
-            return;
-        }
-
-        if (messagePacket.group === myGroup) {
+    onMessageReceived(function (messagePacket) {
+        if (messagePacket.type === MessageType.NotebookSetShared) {
             sharedNotebook[messagePacket.data.key] = messagePacket.data.value;
         }
     });
 
-    betterRadio.onReceivedString(function (receivedData) {
-        const messagePacket: MessagePacket = JSON.parse(receivedData);
-
-        if (messagePacket.type !== MessageType.NotebookDeleteShared) {
-            return;
-        }
-
-        if (messagePacket.group === myGroup) {
+    onMessageReceived(function (messagePacket) {
+        if (messagePacket.type === MessageType.NotebookDeleteShared) {
             delete sharedNotebook[messagePacket.key];
         }
     });
@@ -669,14 +793,8 @@ namespace notebook {
     //% draggableParameters="reporter"
     //% weight=60 group="Hoja compartida"
     export function onUpdateShared(key: string, handler: (valor: any) => void) {
-        betterRadio.onReceivedString(function (receivedString: string) {
-            const messagePacket: MessagePacket = JSON.parse(receivedString);
-
-            if (
-                messagePacket.type === MessageType.NotebookSetShared &&
-                messagePacket.data.key === key &&
-                messagePacket.group === myGroup
-            ) {
+        onMessageReceived(function (messagePacket) {
+            if (messagePacket.type === MessageType.NotebookSetShared && messagePacket.data.key === key) {
                 handler(messagePacket.data.value);
             }
         });
