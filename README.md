@@ -135,8 +135,8 @@ Obtiene un valor agregado (maximo, minimo, suma, promedio) de una clave entre to
 #### Encontrar Dispositivo con Valor Extremo
 
 ```blocks
-let dispositivo1 = notebook.getDeviceWithExtremaValue("temperatura", Devicenotebook.Operation.MAX)
-let dispositivo2 = notebook.getDeviceWithExtremaValue("temperatura", Devicenotebook.Operation.MIN)
+let dispositivo1 = notebook.getDeviceWithExtremaValue("temperatura", notebook.DeviceOperation.MAX)
+let dispositivo2 = notebook.getDeviceWithExtremaValue("temperatura", notebook.DeviceOperation.MIN)
 ```
 
 Identifica el dispositivo con el valor maximo o minimo para una clave especifica en el grupo.
