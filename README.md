@@ -71,7 +71,6 @@ Recupera el valor asociado a una clave en tu hoja.
 
 ```blocks
 if (notebook.doesMyKeyExist("temperatura")) {
-    // Codigo si la clave existe
 }
 ```
 
@@ -99,7 +98,6 @@ Obtiene el valor de una clave en la hoja de otro dispositivo en tu grupo.
 
 ```blocks
 notebook.onUpdateFrom("Bob", "temperatura", function(valor) {
-    // Codigo al recibir un nuevo valor
 })
 ```
 
@@ -109,7 +107,6 @@ Ejecuta codigo cuando se actualiza el valor de una clave en la hoja de otro disp
 
 ```blocks
 notebook.onValueFrom("Bob", "temperatura", 30, function() {
-    // Codigo al coincidir el valor
 })
 ```
 
@@ -119,7 +116,6 @@ Actua cuando el valor de una clave en la hoja de otro dispositivo coincide con e
 
 ```blocks
 if (notebook.doesKeyExistFrom("Bob", "temperatura")) {
-    // Codigo si la clave existe
 }
 ```
 
@@ -128,10 +124,10 @@ Determina si una clave especifica existe en la hoja de otro dispositivo en tu gr
 #### Operaciones Agregadas
 
 ```blocks
-let maximo = notebook.getAggregateValueFrom("temperatura", Operation.MAX)
-let minimo = notebook.getAggregateValueFrom("temperatura", Operation.MIN)
-let suma = notebook.getAggregateValueFrom("temperatura", Operation.SUM)
-let promedio = notebook.getAggregateValueFrom("temperatura", Operation.AVG)
+let maximo = notebook.getAggregateValueFrom("temperatura", notebook.Operation.MAX)
+let minimo = notebook.getAggregateValueFrom("temperatura", notebook.Operation.MIN)
+let suma = notebook.getAggregateValueFrom("temperatura", notebook.Operation.SUM)
+let promedio = notebook.getAggregateValueFrom("temperatura", notebook.Operation.AVG)
 ```
 
 Obtiene un valor agregado (maximo, minimo, suma, promedio) de una clave entre todas las hojas del grupo.
@@ -139,8 +135,8 @@ Obtiene un valor agregado (maximo, minimo, suma, promedio) de una clave entre to
 #### Encontrar Dispositivo con Valor Extremo
 
 ```blocks
-let dispositivo1 = notebook.getDeviceWithExtremaValue("temperatura", DeviceOperation.MAX)
-let dispositivo2 = notebook.getDeviceWithExtremaValue("temperatura", DeviceOperation.MIN)
+let dispositivo1 = notebook.getDeviceWithExtremaValue("temperatura", Devicenotebook.Operation.MAX)
+let dispositivo2 = notebook.getDeviceWithExtremaValue("temperatura", Devicenotebook.Operation.MIN)
 ```
 
 Identifica el dispositivo con el valor maximo o minimo para una clave especifica en el grupo.
@@ -159,7 +155,6 @@ para una clave en el grupo.
 
 ```blocks
 notebook.iterateOverStringKeyValues("temperatura", function(dispositivo, valor) {
-    // Codigo por cada par dispositivo-valor
 })
 ```
 
@@ -187,7 +182,6 @@ Obtiene el valor de una clave en la hoja compartida del grupo.
 
 ```blocks
 if (notebook.doesKeyExistShared("humedad")) {
-    // Codigo si la clave existe
 }
 ```
 
@@ -205,7 +199,6 @@ Elimina una clave y su valor asociado de la hoja compartida del grupo.
 
 ```blocks
 notebook.onUpdateShared("humedad", function(valor) {
-    // Codigo al recibir un nuevo valor
 })
 ```
 
@@ -215,7 +208,6 @@ Actua cuando se actualiza el valor de una clave en la hoja compartida del grupo.
 
 ```blocks
 notebook.onValueShared("humedad", 50, function() {
-    // Codigo al coincidir el valor
 })
 ```
 
