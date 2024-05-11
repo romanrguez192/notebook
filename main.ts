@@ -636,7 +636,7 @@ namespace notebook {
     //% key.defl="clave"
     //% key.shadow=notebook_key
     //% weight=70 group="Hoja resumen"
-    export function getAggregateValueFrom(key: string, operation: Operation): number {
+    export function getAggregateValueFrom(key: string, operation: Operation): any {
         const memberValues = getNumberMemberValuesForKey(key);
 
         if (!memberValues.length) {
